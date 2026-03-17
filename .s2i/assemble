@@ -1,0 +1,10 @@
+#!/bin/bash
+set -e
+
+echo "===== S2I BUILD START ====="
+
+cd /tmp/src
+
+./gradlew clean build -x test
+
+echo "===== BUILD COMPLETE ====="

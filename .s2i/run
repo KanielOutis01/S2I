@@ -1,0 +1,8 @@
+#!/bin/bash
+set -e
+
+echo "===== STARTING APP ====="
+
+JAR=$(ls /tmp/src/build/libs/*.jar | head -n 1)
+
+exec java -jar $JAR
