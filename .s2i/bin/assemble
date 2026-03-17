@@ -9,10 +9,10 @@ chmod +x gradlew
 
 ./gradlew clean build -x test
 
-echo "Copying JAR..."
-
+echo "Creating deployments directory..."
 mkdir -p /deployments
 
+echo "Copying JAR..."
 cp build/libs/*.jar /deployments/app.jar
 
 echo "=== CUSTOM ASSEMBLE DONE ==="
