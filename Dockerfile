@@ -1,4 +1,4 @@
-FROM openjdk:8-jdk-slim as runtime
+FROM eclipse-temurin:17-jdk as runtime
 MAINTAINER Datawire <dev@datawire.io>
 LABEL PROJECT_REPO_URL         = "git@github.com:datawire/???.git" \
       PROJECT_REPO_BROWSER_URL = "https://github.com/datawire/???" \
