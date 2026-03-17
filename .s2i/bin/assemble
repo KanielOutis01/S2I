@@ -9,7 +9,8 @@ chmod +x gradlew
 
 ./gradlew clean build -x test
 
-echo "Creating deployments directory..."
+echo "Fixing deployments path..."
+rm -rf /deployments
 mkdir -p /deployments
 
 echo "Copying JAR..."
