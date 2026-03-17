@@ -31,6 +31,15 @@ jobs:
 
       - name: Trigger Build
         run: |
-		oc start-build finalgello \
-		  --build-arg IMAGE_TAG=${{ github.sha }} \
-		  --follow
+          oc start-build finalgello --follow
+
+      - name: Get Latest Image Digest
+        run: |
+          IMAGE=$(oc get istag finalgello:latest -o jsonpath='{.image.dockerImageReference}')
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Update Knative Service (FORCE NEW REVISION)
+        run: |
+          oc patch ksvc finalgello \
+          --type='merge' \
+          -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"image\":\"$IMAGE\"}]}}}}"
