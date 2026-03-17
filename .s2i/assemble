@@ -1,10 +1,18 @@
 #!/bin/bash
 set -e
 
-echo "===== S2I BUILD START ====="
+echo "=== CUSTOM ASSEMBLE START ==="
 
 cd /tmp/src
 
+chmod +x gradlew
+
 ./gradlew clean build -x test
 
-echo "===== BUILD COMPLETE ====="
+echo "Copying JAR..."
+
+mkdir -p /deployments
+
+cp build/libs/*.jar /deployments/app.jar
+
+echo "=== CUSTOM ASSEMBLE DONE ==="
