@@ -9,11 +9,8 @@ chmod +x gradlew
 
 ./gradlew clean build -x test
 
-echo "Fixing deployments path..."
-rm -rf /deployments
-mkdir -p /deployments
+echo "Copying JAR to /tmp..."
 
-echo "Copying JAR..."
-cp build/libs/*.jar /deployments/app.jar
+cp build/libs/*.jar /tmp/app.jar
 
 echo "=== CUSTOM ASSEMBLE DONE ==="
