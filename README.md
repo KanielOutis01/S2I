@@ -1,51 +1,24 @@
-# Spring Boot Hello World
+# Hello, World (Java/Spring Boot)
 
-**A simple Spring Boot 2.x app to send hello world message to a user**
+This is a Java/Spring Boot template for building a microservice in Kubernetes and Docker. This template is designed for use with [Forge](https://forge.sh), [Telepresence](https://www.telepresence.io), and [Ambassador](https://www.getambassador.io).
 
-## How to Run Application
+# Repository structure
 
-**Start the application using any of the commands mentioned below**
+The main files in this repository are:
 
-> **Note:** First two commands need to run inside the root folder of this project i.e inside the **spring-boot-hello-world** folder
+* `Dockerfile` specifies how the application is built and packaged
+* `k8s/deployment.yaml` contains a templated Kubernetes manifest, with additional annotations for configuring Ambassador
+* `service.yaml` contains values (typically configured by a developer) that will be instantiated into the Kubernetes manifest. This `service.yaml` has also been configured to support [fast incremental container builds with Forge](https://forge.sh/docs/reference/customize-container-builds#enabling-incremental-builds).
+* `src/` contains the actual Java application
 
+# Usage
 
-- **Using maven** <br/>``` mvn spring-boot:run```
+* To deploy this service into Kubernetes from source, type `forge deploy`. If you want to expose this service automatically through an API Gateway, make sure you've installed Ambassador first
+* To run this service locally via Telepresence:
+  * Build a local dev environment: `docker build . -t spring-boot-dev-local`
+  * Deploy into Kubernetes, if you haven't already ('forge deploy')
+  * Run Telepresence: `telepresence --swap-deployment hello-spring-master --docker-run --rm -i -t spring-boot-dev-local`
 
+# License
 
-- **From jar file**
-  Create a jar file using '**mvn clean install**' command and then execute
-  <br/>```java -jar target/spring-boot-2-hello-world-1.0.2-SNAPSHOT.jar```
-
-
-- **Directly from IDE**
-  <br/>```Right click on HelloWorldApplication.java and click on 'Run' option```
-  <br/><br/>
-
-> **Note:** By default spring boot application starts on port number 8080. If port 8080 is occupied in your system then you can change the port number by uncommenting and updating the **server.port** property inside the **application.properties** file that is available inside the **src > main > resources** folder.
-
-<br/>
-
-**Send an HTTP GET request to '/hello' endpoint using any of the two methods**
-
-- **Browser or REST client**
-  <br/>```http://localhost:8080/hello```
-
-
-- **cURL**
-  <br/>```curl --request GET 'http://localhost:8080/hello'```
-
-
-## How to Run Unit Test Cases
-
-**Run the test cases using any of the commands mentioned below**
-
-> **Note:** These commands need to run inside the root folder of this project i.e inside the **spring-boot-hello-world** folder
-
-- **To run all the test cases**
-  <br/>```mvn test```
-
-
-- **To run a particular test class**
-  <br/>```mvn -Dtest=HelloWorldControllerTest test```
-  <br/>or
-  <br/>```mvn -Dtest=HelloWorldApplicationTests test```
+Licensed under Apache 2.0. Please see [LICENSE](LICENSE) for details.
