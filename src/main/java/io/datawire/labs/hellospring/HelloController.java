@@ -17,7 +17,7 @@ public class HelloController {
                                       TimeUnit.MILLISECONDS.toMinutes(millis),
                                       TimeUnit.MILLISECONDS.toSeconds(millis) -
                                       TimeUnit.MINUTES.toSeconds(TimeUnit.MILLISECONDS.toMinutes(millis)));
-        return String.format("Hello, nihanth gandhi is god! (up %s, %s)", uptime, System.getenv("BUILD_PROFILE"));
+        return String.format("she left becuz we got religious issues, she did not believe -i am the god!- (up %s, %s)", uptime, System.getenv("BUILD_PROFILE"));
     }
 
 }

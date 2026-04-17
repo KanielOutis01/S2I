@@ -21,21 +21,18 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # ✅ Unique image tag
       - name: Generate Image Tag
         run: |
           SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-7)
           IMAGE_TAG=dev-${GITHUB_RUN_NUMBER}-${SHORT_SHA}
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
-      # ✅ Install oc
       - name: Install oc CLI
         run: |
           curl -LO https://mirror.openshift.com/pub/openshift-v4/clients/oc/latest/linux/oc.tar.gz
           tar -xvf oc.tar.gz
           sudo mv oc /usr/local/bin/
 
-      # ✅ Login
       - name: Login to OpenShift
         run: |
           oc login $OPENSHIFT_SERVER \
@@ -44,12 +41,10 @@ jobs:
 
           oc project $NAMESPACE
 
-      # ✅ Ensure ImageStream
       - name: Create ImageStream
         run: |
           oc get is $IMAGE_STREAM || oc create is $IMAGE_STREAM
 
-      # ✅ Ensure BuildConfig
       - name: Create BuildConfig
         run: |
           oc get bc $BUILD_CONFIG || oc new-build \
@@ -58,33 +53,27 @@ jobs:
             --binary=true \
             --to=$IMAGE_STREAM:latest
 
-      # ✅ Build
       - name: Start S2I Build
         run: |
           oc start-build $BUILD_CONFIG --from-dir=. --follow
 
-      # ✅ Tag versioned image
       - name: Tag Image
         run: |
           oc tag $IMAGE_STREAM:latest $IMAGE_STREAM:$IMAGE_TAG
 
-      # ✅ Create app (first time only)
       - name: Create Deployment
         run: |
           oc get deployment $APP_NAME || oc new-app $IMAGE_STREAM:latest --name=$APP_NAME
 
-      # ✅ Deploy new version
       - name: Update Deployment Image
         run: |
           oc set image deployment/$APP_NAME \
             $APP_NAME=$IMAGE_STREAM:$IMAGE_TAG
 
-      # ✅ Wait for rollout (VERY IMPORTANT)
       - name: Verify Rollout
         run: |
           oc rollout status deployment/$APP_NAME
 
-      # ✅ Expose route (only once)
       - name: Expose Route
         run: |
           oc get route $APP_NAME || oc expose svc $APP_NAME
