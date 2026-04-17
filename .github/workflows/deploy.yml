@@ -6,12 +6,12 @@ on:
       - main
 
 env:
-  APP_NAME: finalgello
-  NAMESPACE: my-namespace
-  BUILD_CONFIG: finalgello
-  IMAGE_STREAM: finalgello
-  BUILDER_IMAGE: openshift/adibopenjdk-21:1.21-2
-  OPENSHIFT_SERVER: https://api.openshift-cluster:6443
+  APP_NAME: s2i-java-45
+  NAMESPACE: s2i-poc-dev
+  BUILD_CONFIG: s2i-java-45
+  IMAGE_STREAM: s2i-java-45
+  BUILDER_IMAGE: java:openjdk-17-ubi8
+  OPENSHIFT_SERVER: https://api.rm1.0a51.p1.openshiftapps.com:6443
 
 jobs:
   build-and-deploy:
