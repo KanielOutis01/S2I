@@ -6,10 +6,10 @@ on:
       - main
 
 env:
-  APP_NAME: s2i-java-10-45
+  APP_NAME: s2i-java-10-18-45
   NAMESPACE: s2i-poc-dev
-  BUILD_CONFIG: s2i-java-10-45
-  IMAGE_STREAM: s2i-java-10-45
+  BUILD_CONFIG: s2i-java-10-18-45
+  IMAGE_STREAM: s2i-java-10-18-45
   BUILDER_IMAGE: java:openjdk-17-ubi8
   OPENSHIFT_SERVER: https://api.rm1.0a51.p1.openshiftapps.com:6443
 
@@ -41,11 +41,11 @@ jobs:
 
           oc project $NAMESPACE
 
-      - name: Create ImageStream
+      - name: Ensure ImageStream
         run: |
           oc get is $IMAGE_STREAM || oc create is $IMAGE_STREAM
 
-      - name: Create BuildConfig
+      - name: Ensure BuildConfig
         run: |
           oc get bc $BUILD_CONFIG || oc new-build \
             --name=$BUILD_CONFIG \
@@ -61,7 +61,7 @@ jobs:
         run: |
           oc tag $IMAGE_STREAM:latest $IMAGE_STREAM:$IMAGE_TAG
 
-      - name: Create Deployment
+      - name: Ensure Deployment
         run: |
           oc get deployment $APP_NAME || oc new-app $IMAGE_STREAM:latest --name=$APP_NAME
 
@@ -74,6 +74,17 @@ jobs:
         run: |
           oc rollout status deployment/$APP_NAME
 
-      - name: Expose Route
+      - name: Ensure Service
         run: |
-          oc get route $APP_NAME || oc expose svc $APP_NAME
+          oc get svc $APP_NAME || oc expose deployment $APP_NAME --port=8080 --target-port=8080 --name=$APP_NAME
+
+      - name: Ensure Route (TLS Edge)
+        run: |
+          if ! oc get route $APP_NAME; then
+            oc create route edge $APP_NAME \
+              --service=$APP_NAME \
+              --port=8080
+          fi
+
+          oc patch route $APP_NAME \
+            -p '{"spec":{"tls":{"termination":"edge","insecureEdgeTerminationPolicy":"Redirect"}}}'
