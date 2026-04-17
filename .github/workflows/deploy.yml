@@ -1,45 +1,90 @@
-name: OpenShift S2I Deploy
+name: OpenShift S2I Build and Deploy
 
 on:
   push:
     branches:
       - main
 
+env:
+  APP_NAME: finalgello
+  NAMESPACE: my-namespace
+  BUILD_CONFIG: finalgello
+  IMAGE_STREAM: finalgello
+  BUILDER_IMAGE: openshift/adibopenjdk-21:1.21-2
+  OPENSHIFT_SERVER: https://api.openshift-cluster:6443
+
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # ✅ Unique image tag
+      - name: Generate Image Tag
+        run: |
+          SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-7)
+          IMAGE_TAG=dev-${GITHUB_RUN_NUMBER}-${SHORT_SHA}
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+      # ✅ Install oc
       - name: Install oc CLI
         run: |
           curl -LO https://mirror.openshift.com/pub/openshift-v4/clients/oc/latest/linux/oc.tar.gz
           tar -xvf oc.tar.gz
           sudo mv oc /usr/local/bin/
 
+      # ✅ Login
       - name: Login to OpenShift
         run: |
-          oc login ${{ secrets.OPENSHIFT_SERVER }} \
+          oc login $OPENSHIFT_SERVER \
             --token=${{ secrets.OPENSHIFT_TOKEN }} \
             --insecure-skip-tls-verify=true
 
-      - name: Switch Project
-        run: |
-          oc project ${{ secrets.OPENSHIFT_NAMESPACE }}
+          oc project $NAMESPACE
 
-      - name: Trigger Build
+      # ✅ Ensure ImageStream
+      - name: Create ImageStream
         run: |
-          oc start-build finalgello --follow
+          oc get is $IMAGE_STREAM || oc create is $IMAGE_STREAM
 
-      - name: Get Latest Image Digest
+      # ✅ Ensure BuildConfig
+      - name: Create BuildConfig
         run: |
-          IMAGE=$(oc get istag finalgello:latest -o jsonpath='{.image.dockerImageReference}')
-          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          oc get bc $BUILD_CONFIG || oc new-build \
+            --name=$BUILD_CONFIG \
+            --image-stream=$BUILDER_IMAGE \
+            --binary=true \
+            --to=$IMAGE_STREAM:latest
 
-      - name: Update Knative Service (FORCE NEW REVISION)
+      # ✅ Build
+      - name: Start S2I Build
         run: |
-          oc patch ksvc finalgello \
-          --type='merge' \
-          -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"image\":\"$IMAGE\"}]}}}}"
+          oc start-build $BUILD_CONFIG --from-dir=. --follow
+
+      # ✅ Tag versioned image
+      - name: Tag Image
+        run: |
+          oc tag $IMAGE_STREAM:latest $IMAGE_STREAM:$IMAGE_TAG
+
+      # ✅ Create app (first time only)
+      - name: Create Deployment
+        run: |
+          oc get deployment $APP_NAME || oc new-app $IMAGE_STREAM:latest --name=$APP_NAME
+
+      # ✅ Deploy new version
+      - name: Update Deployment Image
+        run: |
+          oc set image deployment/$APP_NAME \
+            $APP_NAME=$IMAGE_STREAM:$IMAGE_TAG
+
+      # ✅ Wait for rollout (VERY IMPORTANT)
+      - name: Verify Rollout
+        run: |
+          oc rollout status deployment/$APP_NAME
+
+      # ✅ Expose route (only once)
+      - name: Expose Route
+        run: |
+          oc get route $APP_NAME || oc expose svc $APP_NAME
