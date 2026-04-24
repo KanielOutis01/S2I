@@ -11,7 +11,6 @@ ENV TERM=dumb
 WORKDIR /srv
 COPY    . .
 
-
 RUN     ./gradlew test build
 
 ENTRYPOINT ["java"]
