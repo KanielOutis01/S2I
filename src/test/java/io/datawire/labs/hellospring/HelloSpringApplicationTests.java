@@ -17,22 +17,22 @@ class HelloSpringApplicationTests {
     @Autowired
     private MockMvc mockMvc;
 
-    // ✅ 1. Basic endpoint test
+    // 1. Endpoint works
     @Test
     void testHelloEndpoint() throws Exception {
         mockMvc.perform(get("/"))
                 .andExpect(status().isOk());
     }
 
-    // ✅ 2. Response contains main message
+    // 2. Validate core message (FIXED)
     @Test
     void testResponseContainsMessage() throws Exception {
         mockMvc.perform(get("/"))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("she left becuz we got religious issues")));
+                .andExpect(content().string(containsString("she left because we got religious issues")));
     }
 
-    // ✅ 3. Response contains uptime format (MM:SS)
+    // 3. Uptime exists
     @Test
     void testResponseContainsUptime() throws Exception {
         mockMvc.perform(get("/"))
@@ -40,7 +40,7 @@ class HelloSpringApplicationTests {
                 .andExpect(content().string(containsString("up")));
     }
 
-    // ✅ 4. Environment variable handling (BUILD_PROFILE)
+    // 4. Env variable placeholder exists
     @Test
     void testResponseContainsBuildProfile() throws Exception {
         mockMvc.perform(get("/"))
@@ -48,7 +48,7 @@ class HelloSpringApplicationTests {
                 .andExpect(content().string(containsString("(")));
     }
 
-    // ✅ 5. Negative test (invalid endpoint)
+    // 5. Invalid endpoint
     @Test
     void testInvalidEndpoint() throws Exception {
         mockMvc.perform(get("/invalid"))
