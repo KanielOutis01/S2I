@@ -21,22 +21,18 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # ✅ Setup Java
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      # ✅ Gradle permission
       - name: Grant execute permission
         run: chmod +x gradlew
 
-      # ✅ Run tests + coverage
       - name: Run Tests with Coverage
         run: ./gradlew clean test jacocoTestReport
 
-      # ✅ Install SonarScanner
       - name: Install SonarScanner
         run: |
           curl -Lo sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
@@ -44,15 +40,6 @@ jobs:
           mv sonar-scanner-* sonar-scanner
           echo "$PWD/sonar-scanner/bin" >> $GITHUB_PATH
 
-      # ✅ Debug secrets (IMPORTANT)
-      - name: Debug Sonar Secrets
-        run: |
-          echo "URL=${{ secrets.SONAR_HOST_URL }}"
-          echo "TOKEN_LENGTH=${#SONAR_TOKEN}"
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
-      # ✅ Sonar Scan
       - name: SonarQube Scan
         run: |
           sonar-scanner \
@@ -64,16 +51,11 @@ jobs:
             -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
             -Dsonar.login=${{ secrets.SONAR_TOKEN }}
 
-      # ✅ Quality Gate Check (SAFE + DEBUG)
       - name: Quality Gate Check
         run: |
           sudo apt-get update && sudo apt-get install -y jq
 
-          echo "Checking Sonar API..."
-          curl -k ${{ secrets.SONAR_HOST_URL }}/api/system/status
-
           TASK_ID=$(grep ceTaskId .scannerwork/report-task.txt | cut -d'=' -f2)
-          echo "TASK_ID=$TASK_ID"
 
           STATUS="PENDING"
           TIMEOUT=300
@@ -84,16 +66,8 @@ jobs:
             ELAPSED=$((ELAPSED + 5))
 
             RESPONSE=$(curl -k -s -u "${{ secrets.SONAR_TOKEN }}:" \
+              -H "Accept: application/json" \
               "${{ secrets.SONAR_HOST_URL }}/api/ce/task?id=$TASK_ID")
-
-            echo "RAW RESPONSE:"
-            echo "$RESPONSE"
-
-            echo "$RESPONSE" | jq . > /dev/null 2>&1
-            if [ $? -ne 0 ]; then
-              echo "Invalid JSON from Sonar API"
-              exit 1
-            fi
 
             STATUS=$(echo "$RESPONSE" | jq -r '.task.status')
 
@@ -110,65 +84,46 @@ jobs:
 
           ANALYSIS_ID=$(echo "$RESPONSE" | jq -r '.task.analysisId')
 
-          QG_RESPONSE=$(curl -k -s -u "${{ secrets.SONAR_TOKEN }}:" \
-            "${{ secrets.SONAR_HOST_URL }}/api/qualitygates/project_status?analysisId=$ANALYSIS_ID")
-
-          echo "QG RESPONSE:"
-          echo "$QG_RESPONSE"
-
-          echo "$QG_RESPONSE" | jq . > /dev/null 2>&1
-          if [ $? -ne 0 ]; then
-            echo "Invalid JSON from Quality Gate API"
-            exit 1
-          fi
-
-          QG_STATUS=$(echo "$QG_RESPONSE" | jq -r '.projectStatus.status')
-
-          echo "Quality Gate Status: $QG_STATUS"
+          QG_STATUS=$(curl -k -s -u "${{ secrets.SONAR_TOKEN }}:" \
+            -H "Accept: application/json" \
+            "${{ secrets.SONAR_HOST_URL }}/api/qualitygates/project_status?analysisId=$ANALYSIS_ID" \
+            | jq -r '.projectStatus.status')
 
           if [[ "$QG_STATUS" != "OK" ]]; then
             echo "Quality Gate Failed"
             exit 1
           fi
 
-      # ✅ Generate Image Tag
       - name: Generate Image Tag
         run: |
           SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-7)
           IMAGE_TAG=dev-${GITHUB_RUN_NUMBER}-${SHORT_SHA}
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
-      # ✅ Install oc CLI
       - name: Install oc CLI
         run: |
           curl -LO https://mirror.openshift.com/pub/openshift-v4/clients/oc/latest/linux/oc.tar.gz
           tar -xvf oc.tar.gz
           sudo mv oc /usr/local/bin/
 
-      # ✅ Login
       - name: Login to OpenShift
         run: |
           oc login $OPENSHIFT_SERVER --token=${{ secrets.OPENSHIFT_TOKEN }} --insecure-skip-tls-verify=true
           oc project $NAMESPACE
 
-      # ✅ ImageStream
       - name: Create ImageStream
         run: oc get is $IMAGE_STREAM || oc create is $IMAGE_STREAM
 
-      # ✅ BuildConfig
       - name: Create BuildConfig
         run: |
           oc get bc $BUILD_CONFIG || oc new-build --name=$BUILD_CONFIG --image-stream=$BUILDER_IMAGE --binary=true --to=$IMAGE_STREAM:latest
 
-      # ✅ Build (ONLY after Sonar passes)
       - name: Start S2I Build
         run: oc start-build $BUILD_CONFIG --from-dir=. --follow
 
-      # ✅ Tag Image
       - name: Tag Image
         run: oc tag $IMAGE_STREAM:latest $IMAGE_STREAM:$IMAGE_TAG
 
-      # ✅ Deploy
       - name: Create Deployment
         run: oc get deployment $APP_NAME || oc new-app $IMAGE_STREAM:latest --name=$APP_NAME
 
