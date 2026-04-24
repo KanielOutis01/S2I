@@ -3,4 +3,6 @@ set -e
 
 echo "=== STARTING APP ==="
 
+
+
 exec java -jar /tmp/app.jar
