@@ -1,138 +1,23 @@
-name: OpenShift S2I Build and Deploy
+name: Library_Pipeline
 
 on:
   push:
     branches:
       - main
 
-env:
-  APP_NAME: s2i-java-45
-  NAMESPACE: s2i-poc-dev
-  BUILD_CONFIG: s2i-java-45
-  IMAGE_STREAM: s2i-java-45
-  BUILDER_IMAGE: java:openjdk-17-ubi8
-  OPENSHIFT_SERVER: https://api.rm1.0a51.p1.openshiftapps.com:6443
-
-
 jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
+  ci:
+    uses: KanielOutis01/shared-libraries/.github/workflows/ci-template.yml@main
+    with:
+      app_name: s2i-java-45
+      project_type: java
+    secrets: inherit
 
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Grant execute permission
-        run: chmod +x gradlew
-
-      - name: Run Tests with Coverage
-        run: ./gradlew clean test jacocoTestReport
-
-      - name: Install SonarScanner
-        run: |
-          curl -Lo sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
-          unzip -q sonar-scanner.zip
-          mv sonar-scanner-* sonar-scanner
-          echo "$PWD/sonar-scanner/bin" >> $GITHUB_PATH
-
-      - name: SonarQube Scan
-        run: |
-          sonar-scanner \
-            -Dsonar.projectKey=${{ env.APP_NAME }} \
-            -Dsonar.projectName=${{ env.APP_NAME }} \
-            -Dsonar.sources=src/main/java \
-            -Dsonar.java.binaries=build/classes \
-            -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml \
-            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
-            -Dsonar.login=${{ secrets.SONAR_TOKEN }}
-
-      - name: Quality Gate Check
-        run: |
-          sudo apt-get update && sudo apt-get install -y jq
-
-          TASK_ID=$(grep ceTaskId .scannerwork/report-task.txt | cut -d'=' -f2)
-
-          STATUS="PENDING"
-          TIMEOUT=300
-          ELAPSED=0
-
-          while [[ "$STATUS" == "PENDING" || "$STATUS" == "IN_PROGRESS" ]]; do
-            sleep 5
-            ELAPSED=$((ELAPSED + 5))
-
-            RESPONSE=$(curl -k -s -u "${{ secrets.SONAR_TOKEN }}:" \
-              -H "Accept: application/json" \
-              "${{ secrets.SONAR_HOST_URL }}/api/ce/task?id=$TASK_ID")
-
-            STATUS=$(echo "$RESPONSE" | jq -r '.task.status')
-
-            if [ $ELAPSED -ge $TIMEOUT ]; then
-              echo "Timeout waiting for SonarQube"
-              exit 1
-            fi
-          done
-
-          if [[ "$STATUS" != "SUCCESS" ]]; then
-            echo "Sonar analysis failed"
-            exit 1
-          fi
-
-          ANALYSIS_ID=$(echo "$RESPONSE" | jq -r '.task.analysisId')
-
-          QG_STATUS=$(curl -k -s -u "${{ secrets.SONAR_TOKEN }}:" \
-            -H "Accept: application/json" \
-            "${{ secrets.SONAR_HOST_URL }}/api/qualitygates/project_status?analysisId=$ANALYSIS_ID" \
-            | jq -r '.projectStatus.status')
-
-          if [[ "$QG_STATUS" != "OK" ]]; then
-            echo "Quality Gate Failed"
-            exit 1
-          fi
-
-      - name: Generate Image Tag
-        run: |
-          SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-7)
-          IMAGE_TAG=dev-${GITHUB_RUN_NUMBER}-${SHORT_SHA}
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
-
-      - name: Install oc CLI
-        run: |
-          curl -LO https://mirror.openshift.com/pub/openshift-v4/clients/oc/latest/linux/oc.tar.gz
-          tar -xvf oc.tar.gz
-          sudo mv oc /usr/local/bin/
-
-      - name: Login to OpenShift
-        run: |
-          oc login $OPENSHIFT_SERVER --token=${{ secrets.OPENSHIFT_TOKEN }} --insecure-skip-tls-verify=true
-          oc project $NAMESPACE
-
-      - name: Create ImageStream
-        run: oc get is $IMAGE_STREAM || oc create is $IMAGE_STREAM
-
-      - name: Create BuildConfig
-        run: |
-          oc get bc $BUILD_CONFIG || oc new-build --name=$BUILD_CONFIG --image-stream=$BUILDER_IMAGE --binary=true --to=$IMAGE_STREAM:latest
-
-      - name: Start S2I Build
-        run: oc start-build $BUILD_CONFIG --from-dir=. --follow
-
-      - name: Tag Image
-        run: oc tag $IMAGE_STREAM:latest $IMAGE_STREAM:$IMAGE_TAG
-
-      - name: Create Deployment
-        run: oc get deployment $APP_NAME || oc new-app $IMAGE_STREAM:latest --name=$APP_NAME
-
-      - name: Update Deployment Image
-        run: oc set image deployment/$APP_NAME $APP_NAME=$IMAGE_STREAM:$IMAGE_TAG
-
-      - name: Verify Rollout
-        run: oc rollout status deployment/$APP_NAME
-
-      - name: Expose Route
-        run: oc get route $APP_NAME || oc expose svc $APP_NAME
+  deploy:
+    needs: ci
+    uses: KanielOutis01/shared-libraries/.github/workflows/deploy-template.yml@main
+    with:
+      app_name: s2i-java-45
+      namespace: s2i-poc-dev
+      project_type: java
+    secrets: inherit
