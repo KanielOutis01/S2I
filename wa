@@ -1,436 +1,224 @@
-# Context Handoff: OpenShift CI/CD via GitHub Actions
-
-I'm building a GitHub Actions CI/CD architecture for deploying 19 microservices to OpenShift. Below is the complete current state of the design. Continue helping me from here — next step is wiring secret volumeMounts into `deployment.yaml` once I paste it.
-
-## Repository
-
-**Name:** `bootstrap-environment`
-
-**Layout:**
-```
-bootstrap-environment/
-├── .github/
-│   ├── workflows/
-│   │   ├── bootstrap-environment.yaml    # Pipeline 1
-│   │   └── application-release.yaml      # Pipeline 2
-│   └── actions/
-│       └── oc-login/
-│           └── action.yaml               # composite action for oc login
-├── customer-journey-bff/
-│   ├── uat/
-│   │   ├── deployment.yaml
-│   │   ├── service.yaml
-│   │   └── route.yaml
-│   └── prod/
-│       ├── deployment.yaml
-│       ├── service.yaml
-│       └── route.yaml
-├── account-bff/
-│   ├── uat/
-│   └── prod/
-├── payment-bff/
-│   ├── uat/
-│   └── prod/
-... (19 microservices total, same uat/prod structure)
-└── scripts/
-    ├── bootstrap.sh
-    ├── create-secrets.sh
-    └── release.sh
-```
-
-## Pipeline 1 — Environment Bootstrap
-
-**Purpose:** Deploy all OpenShift resources for a microservice into a namespace (manual, workflow_dispatch).
-
-**Inputs:** microservice (choice, 19 options), environment (uat/prod), namespace (string).
-
-**Process:**
-1. Validate `<microservice>/<environment>/` exists with deployment.yaml, service.yaml, route.yaml.
-2. Validate namespace format (lowercase alphanumeric + hyphens).
-3. OC login via service account token (composite action).
-4. Create two placeholder Secret objects (idempotent, see below).
-5. Apply deployment.yaml → service.yaml → route.yaml in that order.
-6. Wait for rollout.
-
-### Secrets required in Pipeline 1 (NEW — needs deployment.yaml to finish wiring)
-
-Two Secret objects, created as **empty/placeholder** by the pipeline, **populated manually afterward** by someone else (not the pipeline):
-
-| Secret Name | Key | Mount Path | Notes |
-|---|---|---|---|
-| `application-profile` | `application-uat.yml` | `/app/config` | text/yaml content |
-| `keystore` | `keystore.jks` | `/app/ssl` | **binary** — real population must use `--from-file`, not `--from-literal` |
-
-Secret creation is idempotent via `--dry-run=client -o yaml \| oc apply -f -` so reruns never wipe manually-populated data and never error on "already exists".
-
-**OPEN ITEM:** I have NOT yet pasted my actual `deployment.yaml`. Once I do, wire in:
-- A `volumes:` block referencing both secrets (`application-profile`, `keystore`)
-- Matching `volumeMounts:` in the correct container, at `/app/config` and `/app/ssl`
-- Confirm correct container name/indentation against my real file — do not guess
-
-## Pipeline 2 — Application Release
-
-**Purpose:** Deploy a new image into an already-bootstrapped environment (manual, workflow_dispatch). GitOps-style: commit manifest change to Git FIRST, then apply to cluster — so Git stays the source of truth even if the cluster apply fails.
-
-**Inputs:** microservice, environment, namespace, image_repository, image_tag.
-
-**Process:**
-1. Validate deployment.yaml exists; reject `latest` as a tag (immutable tags only).
-2. Update `spec.template.spec.containers[0].image` in `<microservice>/<environment>/deployment.yaml` via `yq`.
-3. Commit + push the change back to the repo.
-4. Re-checkout, oc login, `oc apply -f deployment.yaml`.
-5. `oc rollout status` with 300s timeout.
-6. Verify pod health.
-7. On failure: `oc rollout undo` (automatic rollback).
-
-## Security Considerations (already agreed)
-
-- Service account tokens stored as **GitHub Environment secrets** (separate `uat` and `prod` GitHub Environments) — not repo-level secrets — so prod can require manual approval reviewers.
-- Dedicated OpenShift ServiceAccount per environment, namespace-scoped RoleBindings, no cluster-admin.
-- `workflow_dispatch` only — no push/PR triggers.
-- Pin GitHub Actions to SHA, not tag, in production.
-- Input validation before any cluster mutation (namespace regex, directory existence, tag format).
-
-## Full current code
-
-### `.github/actions/oc-login/action.yaml`
-```yaml
-name: 'OC Login'
-description: 'Authenticate to OpenShift cluster using a service account token'
-inputs:
-  server-url:
-    required: true
-  token:
-    required: true
-  namespace:
-    required: true
-runs:
-  using: "composite"
-  steps:
-    - name: Install oc CLI
-      shell: bash
-      run: |
-        if ! command -v oc &> /dev/null; then
-          curl -sLo oc.tar.gz https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz
-          tar -xzf oc.tar.gz oc
-          sudo mv oc /usr/local/bin/oc
-        fi
-        oc version --client
-
-    - name: Login to OpenShift
-      shell: bash
-      run: |
-        oc login --token="${{ inputs.token }}" --server="${{ inputs.server-url }}"
-        oc project "${{ inputs.namespace }}"
-```
-
-### `.github/workflows/bootstrap-environment.yaml`
-```yaml
-name: 1 - Environment Bootstrap
-
-on:
-  workflow_dispatch:
-    inputs:
-      microservice:
-        description: 'Microservice name'
-        required: true
-        type: choice
-        options:
-          - customer-journey-bff
-          - account-bff
-          - payment-bff
-          # ... rest of the 19
-      environment:
-        description: 'Target environment'
-        required: true
-        type: choice
-        options:
-          - uat
-          - prod
-      namespace:
-        description: 'OpenShift namespace'
-        required: true
-        type: string
-
-jobs:
-  validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Validate path exists
-        run: |
-          DIR="${{ inputs.microservice }}/${{ inputs.environment }}"
-          if [ ! -d "$DIR" ]; then
-            echo "::error::Directory $DIR does not exist"
-            exit 1
-          fi
-          for f in deployment.yaml service.yaml route.yaml; do
-            if [ ! -f "$DIR/$f" ]; then
-              echo "::error::Missing $DIR/$f"
-              exit 1
-            fi
-          done
-
-      - name: Validate namespace format
-        run: |
-          if ! [[ "${{ inputs.namespace }}" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
-            echo "::error::Invalid namespace format"
-            exit 1
-          fi
-
-  bootstrap:
-    needs: validate
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: OC Login
-        uses: ./.github/actions/oc-login
-        with:
-          server-url: ${{ secrets.OPENSHIFT_SERVER }}
-          token: ${{ secrets.OPENSHIFT_TOKEN }}
-          namespace: ${{ inputs.namespace }}
-
-      - name: Create placeholder secrets
-        run: |
-          chmod +x scripts/create-secrets.sh
-          ./scripts/create-secrets.sh "${{ inputs.namespace }}"
-
-      - name: Apply resources
-        run: |
-          chmod +x scripts/bootstrap.sh
-          ./scripts/bootstrap.sh \
-            "${{ inputs.microservice }}" \
-            "${{ inputs.environment }}" \
-            "${{ inputs.namespace }}"
-
-      - name: Summary
-        run: |
-          echo "### Bootstrap Complete :rocket:" >> $GITHUB_STEP_SUMMARY
-          echo "- Microservice: \`${{ inputs.microservice }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Environment: \`${{ inputs.environment }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Namespace: \`${{ inputs.namespace }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Secrets: \`application-profile\`, \`keystore\` (placeholder — populate manually)" >> $GITHUB_STEP_SUMMARY
-```
-
-### `scripts/create-secrets.sh`
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-NAMESPACE="$1"
-
-echo "Ensuring placeholder secrets exist in namespace ${NAMESPACE}..."
-
-# Secret 1: application-profile -> mounted at /app/config
-oc create secret generic application-profile \
-  --from-literal=application-uat.yml="# placeholder - populate manually" \
-  --dry-run=client -o yaml | oc apply -f - -n "${NAMESPACE}"
-
-# Secret 2: keystore -> mounted at /app/ssl
-oc create secret generic keystore \
-  --from-literal=keystore.jks="placeholder" \
-  --dry-run=client -o yaml | oc apply -f - -n "${NAMESPACE}"
-
-echo "Secrets ensured:"
-oc get secrets application-profile keystore -n "${NAMESPACE}"
-```
-
-### `scripts/bootstrap.sh`
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-MICROSERVICE="$1"
-ENVIRONMENT="$2"
-NAMESPACE="$3"
-DIR="${MICROSERVICE}/${ENVIRONMENT}"
-
-echo "Bootstrapping ${MICROSERVICE} into namespace ${NAMESPACE} (${ENVIRONMENT})"
-
-oc project "${NAMESPACE}"
-
-for resource in deployment service route; do
-  FILE="${DIR}/${resource}.yaml"
-  echo "Applying ${FILE}..."
-  oc apply -f "${FILE}" -n "${NAMESPACE}"
-done
-
-echo "Waiting for deployment rollout..."
-APP_NAME=$(oc apply -f "${DIR}/deployment.yaml" -n "${NAMESPACE}" --dry-run=client -o jsonpath='{.metadata.name}')
-oc rollout status "deployment/${APP_NAME}" -n "${NAMESPACE}" --timeout=300s
-
-echo "Bootstrap complete for ${MICROSERVICE} in ${NAMESPACE}"
-```
-
-### `.github/workflows/application-release.yaml`
-```yaml
-name: 2 - Application Release
-
-on:
-  workflow_dispatch:
-    inputs:
-      microservice:
-        required: true
-        type: choice
-        options:
-          - customer-journey-bff
-          - account-bff
-          - payment-bff
-      environment:
-        required: true
-        type: choice
-        options:
-          - uat
-          - prod
-      namespace:
-        required: true
-        type: string
-      image_repository:
-        description: 'e.g. ghcr.io/company/customer-journey-bff'
-        required: true
-        type: string
-      image_tag:
-        description: 'e.g. v1.2.5'
-        required: true
-        type: string
-
-permissions:
-  contents: write
-
-jobs:
-  validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Validate deployment file exists
-        run: |
-          FILE="${{ inputs.microservice }}/${{ inputs.environment }}/deployment.yaml"
-          test -f "$FILE" || { echo "::error::$FILE not found"; exit 1; }
-
-      - name: Validate image tag format
-        run: |
-          if [[ "${{ inputs.image_tag }}" == "latest" ]]; then
-            echo "::error::Refusing to deploy 'latest' tag — use immutable tags"
-            exit 1
-          fi
-
-  update-manifest:
-    needs: validate
-    runs-on: ubuntu-latest
-    outputs:
-      app_name: ${{ steps.appname.outputs.app_name }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update image in deployment.yaml
-        run: |
-          chmod +x scripts/release.sh
-          ./scripts/release.sh update-image \
-            "${{ inputs.microservice }}" \
-            "${{ inputs.environment }}" \
-            "${{ inputs.image_repository }}" \
-            "${{ inputs.image_tag }}"
-
-      - id: appname
-        run: |
-          FILE="${{ inputs.microservice }}/${{ inputs.environment }}/deployment.yaml"
-          NAME=$(yq '.metadata.name' "$FILE")
-          echo "app_name=$NAME" >> "$GITHUB_OUTPUT"
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          FILE="${{ inputs.microservice }}/${{ inputs.environment }}/deployment.yaml"
-          git add "$FILE"
-          git commit -m "deploy(${{ inputs.environment }}): ${{ inputs.microservice }} -> ${{ inputs.image_tag }}" || echo "No changes to commit"
-          git push
-
-  deploy:
-    needs: update-manifest
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: OC Login
-        uses: ./.github/actions/oc-login
-        with:
-          server-url: ${{ secrets.OPENSHIFT_SERVER }}
-          token: ${{ secrets.OPENSHIFT_TOKEN }}
-          namespace: ${{ inputs.namespace }}
-
-      - name: Apply updated deployment
-        run: |
-          FILE="${{ inputs.microservice }}/${{ inputs.environment }}/deployment.yaml"
-          oc apply -f "$FILE" -n "${{ inputs.namespace }}"
-
-      - name: Wait for rollout
-        run: |
-          oc rollout status "deployment/${{ needs.update-manifest.outputs.app_name }}" \
-            -n "${{ inputs.namespace }}" --timeout=300s
-
-      - name: Verify pods healthy
-        run: |
-          oc get pods -n "${{ inputs.namespace }}" \
-            -l app="${{ needs.update-manifest.outputs.app_name }}" \
-            -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}'
-
-      - name: Rollback on failure
-        if: failure()
-        run: |
-          echo "::warning::Rollout failed, rolling back"
-          oc rollout undo "deployment/${{ needs.update-manifest.outputs.app_name }}" -n "${{ inputs.namespace }}"
-
-      - name: Summary
-        if: success()
-        run: |
-          echo "### Release Complete :white_check_mark:" >> $GITHUB_STEP_SUMMARY
-          echo "- Image: \`${{ inputs.image_repository }}:${{ inputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Namespace: \`${{ inputs.namespace }}\`" >> $GITHUB_STEP_SUMMARY
-```
-
-### `scripts/release.sh`
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-COMMAND="$1"
-
-update_image() {
-  local MICROSERVICE="$1"
-  local ENVIRONMENT="$2"
-  local IMAGE_REPO="$3"
-  local IMAGE_TAG="$4"
-  local FILE="${MICROSERVICE}/${ENVIRONMENT}/deployment.yaml"
-  local NEW_IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
-
-  echo "Updating ${FILE} image to ${NEW_IMAGE}"
-  yq -i ".spec.template.spec.containers[0].image = \"${NEW_IMAGE}\"" "$FILE"
-
-  echo "Updated:"
-  yq '.spec.template.spec.containers[0].image' "$FILE"
-}
-
-case "$COMMAND" in
-  update-image)
-    shift
-    update_image "$@"
-    ;;
-  *)
-    echo "Unknown command: $COMMAND"
-    exit 1
-    ;;
-esac
-```
-
-## Next steps to continue
-
-1. **I will paste my actual `deployment.yaml`** — wire the `volumes:`/`volumeMounts:` for `application-profile` (→ `/app/config`) and `keystore` (→ `/app/ssl`) into it without breaking existing container/volume definitions.
-2. Open question I haven't decided yet: dynamic discovery of the 19 microservices for the `choice` dropdown (currently static list, will need a PR every time a service is added) vs. keeping it static.
-3. Not yet built: OpenShift RBAC manifests (ServiceAccount / Role / RoleBinding) for the uat and prod service accounts referenced by `OPENSHIFT_TOKEN`.
-4. Not yet built: reusable `workflow_call` versions of these two pipelines, in case other repos need to invoke them.
+I need help designing and implementing a secure configuration deployment pipeline for OpenShift using a Vault-based secret injection approach. Please act as a Senior DevOps Architect and generate production-quality design, scripts, workflow changes, and implementation guidance.
+
+Existing Architecture
+
+I have a dedicated configuration repository.
+
+Each microservice has its own configuration file (application.properties or application.yaml).
+
+Whenever a configuration file changes, a GitHub Actions workflow is triggered automatically.
+
+The workflow can also be executed manually using workflow_dispatch.
+
+Each microservice currently has separate GitHub Actions workflow files for the following environments:
+
+- DEV
+- SIT
+- UAT
+- PROD
+
+The pipeline currently performs these steps:
+
+1. Checkout configuration repository.
+2. Read the configuration file.
+3. Create or update an OpenShift Secret called application-profile.
+4. Mount the secret into the application pod.
+5. Restart the deployment so the application picks up the new configuration.
+
+This deployment flow already works perfectly.
+
+I do NOT want to redesign or remove any existing functionality.
+
+I only want to ADD a secure Vault integration before the OpenShift Secret is created.
+
+---
+
+Current Problem
+
+Today the configuration repository contains plaintext secrets.
+
+Examples include:
+
+- Database password
+- API Manager client secret
+- OAuth secrets
+- Downstream system credentials
+- Any confidential key/value pairs
+
+These secrets should never exist inside Git.
+
+They should also never exist as encrypted text inside Git.
+
+Vault must become the single source of truth.
+
+---
+
+Desired Repository Structure
+
+The configuration file should only contain placeholders.
+
+Example:
+
+db.username=myuser
+
+db.password={{vault:db/password}}
+
+apim.client.secret={{vault:apim/client-secret}}
+
+server.port=8080
+
+logging.level=INFO
+
+The repository must never contain the real values.
+
+---
+
+Vault Structure
+
+Vault should be organized by environment and microservice.
+
+Example:
+
+kv/
+
+dev/
+payment-service/
+
+db/password
+
+apim/client-secret
+
+sit/
+payment-service/
+
+db/password
+
+apim/client-secret
+
+uat/
+payment-service/
+
+...
+
+prod/
+payment-service/
+
+...
+
+The workflow should automatically determine the correct Vault path.
+
+The placeholder itself should never contain the environment.
+
+Example placeholder:
+
+{{vault:db/password}}
+
+The workflow should automatically resolve it into
+
+kv/<environment>/<microservice>/db/password
+
+Examples:
+
+DEV workflow
+
+kv/dev/payment-service/db/password
+
+SIT workflow
+
+kv/sit/payment-service/db/password
+
+UAT workflow
+
+kv/uat/payment-service/db/password
+
+PROD workflow
+
+kv/prod/payment-service/db/password
+
+The workflow should derive both the environment and the microservice automatically.
+
+---
+
+Important Requirement
+
+The Git repository must NEVER be modified.
+
+The placeholder file should stay exactly as it is.
+
+The workflow should:
+
+1. Checkout repository.
+2. Read placeholders.
+3. Authenticate to Vault.
+4. Read required secrets.
+5. Replace placeholders ONLY inside the temporary GitHub Actions runner workspace.
+6. Generate a temporary application.properties/application.yaml file.
+7. Use that generated file to create or update the OpenShift Secret.
+8. Restart the deployment.
+9. Delete temporary files after completion.
+
+No commit back to Git.
+
+No secrets stored in Git.
+
+No plaintext written back into the repository.
+
+---
+
+Security Requirements
+
+Secrets must exist only:
+
+- Inside Vault
+- In the GitHub Actions runner memory/workspace during execution
+- Inside the OpenShift Secret after deployment
+
+Secrets must never appear in:
+
+- Git history
+- Pull requests
+- Configuration repository
+- Logs
+- Console output
+- Debug output
+
+Mask all secrets in workflow logs.
+
+---
+
+Existing Pipeline Constraint
+
+I cannot redesign the current CI/CD.
+
+I can only insert additional steps before the OpenShift Secret is generated.
+
+Everything after the secret creation should remain unchanged.
+
+---
+
+What I Need You To Generate
+
+Please generate the following in production quality:
+
+1. Recommended overall architecture diagram (ASCII is fine).
+2. Complete workflow execution flow.
+3. GitHub Actions workflow modifications.
+4. Placeholder parsing logic.
+5. Vault authentication approach.
+6. Secret replacement algorithm.
+7. Sample scripts (Bash or Python).
+8. Error handling.
+9. Retry logic.
+10. Missing secret handling.
+11. Logging strategy.
+12. Security best practices.
+13. Temporary file cleanup.
+14. OpenShift secret creation using the generated configuration file.
+15. Deployment restart.
+16. Folder structure.
+17. Recommended reusable implementation so every microservice can use the same logic.
+18. Best practices for supporting DEV, SIT, UAT, and PROD without duplicating code.
+19. Future scalability recommendations.
+20. Production-ready implementation with detailed explanations for every design decision.
+
+The implementation should follow enterprise DevOps best practices and be reusable across dozens or hundreds of microservices.
