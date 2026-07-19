@@ -1,224 +1,451 @@
-I need help designing and implementing a secure configuration deployment pipeline for OpenShift using a Vault-based secret injection approach. Please act as a Senior DevOps Architect and generate production-quality design, scripts, workflow changes, and implementation guidance.
+# Knowledge Transfer (KT): Standalone Code Quality Metrics Collector (KLOC & Defect Density)
 
-Existing Architecture
+===============================================================================
+OBJECTIVE
+===============================================================================
 
-I have a dedicated configuration repository.
+Design and implement a standalone utility that runs independently of the CI/CD
+pipeline to collect code quality metrics from SonarQube and generate reports.
 
-Each microservice has its own configuration file (application.properties or application.yaml).
+The utility will run from a dedicated Linux server (or VM) that has network
+access to:
 
-Whenever a configuration file changes, a GitHub Actions workflow is triggered automatically.
+• SonarQube
+• GitHub (optional)
+• OpenShift (optional)
+• Internal repositories
 
-The workflow can also be executed manually using workflow_dispatch.
+This utility is NOT part of the DevOps pipeline. It should be executable on
+demand or via a scheduled cron job.
 
-Each microservice currently has separate GitHub Actions workflow files for the following environments:
+===============================================================================
+GOAL
+===============================================================================
 
-- DEV
-- SIT
-- UAT
-- PROD
+Generate a quality report for each application containing:
 
-The pipeline currently performs these steps:
+• Project Name
+• NCLOC (Non-Comment Lines of Code)
+• KLOC
+• Bugs
+• Vulnerabilities
+• Security Hotspots
+• Code Smells
+• Coverage
+• Duplicated Code
+• Reliability Rating
+• Security Rating
+• Maintainability Rating
+• Defect Density
+• Vulnerability Density
+• Code Smell Density
+• Scan Date
+• Trend (optional)
 
-1. Checkout configuration repository.
-2. Read the configuration file.
-3. Create or update an OpenShift Secret called application-profile.
-4. Mount the secret into the application pod.
-5. Restart the deployment so the application picks up the new configuration.
+Only first-party source code must be considered.
 
-This deployment flow already works perfectly.
+===============================================================================
+HIGH LEVEL ARCHITECTURE
+===============================================================================
 
-I do NOT want to redesign or remove any existing functionality.
+                      +---------------------+
+                      |   Linux Server      |
+                      |  Metrics Collector  |
+                      +----------+----------+
+                                 |
+        -------------------------------------------------
+        |                  |                 |           |
+        |                  |                 |           |
+        ▼                  ▼                 ▼           ▼
+   SonarQube API      GitHub API      OpenShift API   Report Folder
 
-I only want to ADD a secure Vault integration before the OpenShift Secret is created.
+The utility mainly uses SonarQube. GitHub/OpenShift are optional if additional
+metadata (repository, branch, deployment info) is required.
 
----
+===============================================================================
+DIRECTORY STRUCTURE
+===============================================================================
 
-Current Problem
+quality-metrics/
 
-Today the configuration repository contains plaintext secrets.
+│
 
-Examples include:
+├── config/
 
-- Database password
-- API Manager client secret
-- OAuth secrets
-- Downstream system credentials
-- Any confidential key/value pairs
+│      config.yaml
 
-These secrets should never exist inside Git.
+│
 
-They should also never exist as encrypted text inside Git.
+├── scripts/
 
-Vault must become the single source of truth.
+│      collect_metrics.py
 
----
+│      calculate_metrics.py
 
-Desired Repository Structure
+│      generate_report.py
 
-The configuration file should only contain placeholders.
+│
+
+├── output/
+
+│      json/
+
+│      csv/
+
+│      html/
+
+│
+
+├── logs/
+
+│
+
+├── archive/
+
+│
+
+└── README.md
+
+===============================================================================
+CONFIGURATION
+===============================================================================
+
+config.yaml
+
+Store all configurable values.
 
 Example:
 
-db.username=myuser
+Sonar URL
 
-db.password={{vault:db/password}}
+Sonar Authentication Token
 
-apim.client.secret={{vault:apim/client-secret}}
+Project Keys
 
-server.port=8080
+Output Directory
 
-logging.level=INFO
+Schedule Frequency
 
-The repository must never contain the real values.
+Timeout
 
----
+Proxy Details (if required)
 
-Vault Structure
+Nothing should be hardcoded.
 
-Vault should be organized by environment and microservice.
+===============================================================================
+DATA SOURCE
+===============================================================================
 
-Example:
+Primary Source
 
-kv/
+SonarQube REST API
 
-dev/
-payment-service/
+Endpoint
 
-db/password
+/api/measures/component
 
-apim/client-secret
+Metrics Required
 
-sit/
-payment-service/
+ncloc
 
-db/password
+bugs
 
-apim/client-secret
+vulnerabilities
 
-uat/
-payment-service/
+security_hotspots
 
-...
+code_smells
 
-prod/
-payment-service/
+coverage
 
-...
+duplicated_lines_density
 
-The workflow should automatically determine the correct Vault path.
+reliability_rating
 
-The placeholder itself should never contain the environment.
+security_rating
 
-Example placeholder:
+sqale_rating
 
-{{vault:db/password}}
+===============================================================================
+WORKFLOW
+===============================================================================
 
-The workflow should automatically resolve it into
+Step 1
 
-kv/<environment>/<microservice>/db/password
+Read configuration.
 
-Examples:
+↓
 
-DEV workflow
+Step 2
 
-kv/dev/payment-service/db/password
+Authenticate with SonarQube using API Token.
 
-SIT workflow
+↓
 
-kv/sit/payment-service/db/password
+Step 3
 
-UAT workflow
+Read project list from configuration.
 
-kv/uat/payment-service/db/password
+↓
 
-PROD workflow
+Step 4
 
-kv/prod/payment-service/db/password
+For every project
 
-The workflow should derive both the environment and the microservice automatically.
+Call SonarQube REST API
 
----
+↓
 
-Important Requirement
+Step 5
 
-The Git repository must NEVER be modified.
+Read metrics
 
-The placeholder file should stay exactly as it is.
+NCLOC
 
-The workflow should:
+Bugs
 
-1. Checkout repository.
-2. Read placeholders.
-3. Authenticate to Vault.
-4. Read required secrets.
-5. Replace placeholders ONLY inside the temporary GitHub Actions runner workspace.
-6. Generate a temporary application.properties/application.yaml file.
-7. Use that generated file to create or update the OpenShift Secret.
-8. Restart the deployment.
-9. Delete temporary files after completion.
+Vulnerabilities
 
-No commit back to Git.
+Coverage
 
-No secrets stored in Git.
+Code Smells
 
-No plaintext written back into the repository.
+Security Hotspots
 
----
+Duplicated Code
 
-Security Requirements
+Ratings
 
-Secrets must exist only:
+↓
 
-- Inside Vault
-- In the GitHub Actions runner memory/workspace during execution
-- Inside the OpenShift Secret after deployment
+Step 6
 
-Secrets must never appear in:
+Perform calculations
 
-- Git history
-- Pull requests
-- Configuration repository
-- Logs
-- Console output
-- Debug output
+KLOC = NCLOC / 1000
 
-Mask all secrets in workflow logs.
+Defect Density = Bugs / KLOC
 
----
+Vulnerability Density = Vulnerabilities / KLOC
 
-Existing Pipeline Constraint
+Code Smell Density = Code Smells / KLOC
 
-I cannot redesign the current CI/CD.
+↓
 
-I can only insert additional steps before the OpenShift Secret is generated.
+Step 7
 
-Everything after the secret creation should remain unchanged.
+Generate reports
 
----
+JSON
 
-What I Need You To Generate
+CSV
 
-Please generate the following in production quality:
+HTML
 
-1. Recommended overall architecture diagram (ASCII is fine).
-2. Complete workflow execution flow.
-3. GitHub Actions workflow modifications.
-4. Placeholder parsing logic.
-5. Vault authentication approach.
-6. Secret replacement algorithm.
-7. Sample scripts (Bash or Python).
-8. Error handling.
-9. Retry logic.
-10. Missing secret handling.
-11. Logging strategy.
-12. Security best practices.
-13. Temporary file cleanup.
-14. OpenShift secret creation using the generated configuration file.
-15. Deployment restart.
-16. Folder structure.
-17. Recommended reusable implementation so every microservice can use the same logic.
-18. Best practices for supporting DEV, SIT, UAT, and PROD without duplicating code.
-19. Future scalability recommendations.
-20. Production-ready implementation with detailed explanations for every design decision.
+↓
 
-The implementation should follow enterprise DevOps best practices and be reusable across dozens or hundreds of microservices.
+Step 8
+
+Store reports in output folder.
+
+↓
+
+Step 9
+
+Archive previous reports.
+
+↓
+
+Step 10
+
+Log execution status.
+
+===============================================================================
+CALCULATIONS
+===============================================================================
+
+KLOC
+
+KLOC = NCLOC / 1000
+
+Example
+
+NCLOC = 52,860
+
+KLOC = 52.86
+
+--------------------------------------------
+
+Defect Density
+
+Bugs / KLOC
+
+Example
+
+110 Bugs
+
+52.86 KLOC
+
+110 / 52.86
+
+= 2.08 Bugs/KLOC
+
+--------------------------------------------
+
+Vulnerability Density
+
+Vulnerabilities / KLOC
+
+--------------------------------------------
+
+Code Smell Density
+
+Code Smells / KLOC
+
+===============================================================================
+OUTPUT FILES
+===============================================================================
+
+JSON
+
+metrics.json
+
+CSV
+
+metrics.csv
+
+HTML
+
+metrics.html
+
+Each report should contain one row per application.
+
+===============================================================================
+SAMPLE REPORT
+===============================================================================
+
+Application : Retail-BFF
+
+Scan Date : 19-Jul-2026
+
+NCLOC : 52,860
+
+KLOC : 52.86
+
+Bugs : 110
+
+Vulnerabilities : 8
+
+Security Hotspots : 14
+
+Code Smells : 635
+
+Coverage : 81.2%
+
+Duplicated Code : 1.4%
+
+Reliability Rating : A
+
+Security Rating : A
+
+Maintainability Rating : B
+
+Defect Density : 2.08 Bugs/KLOC
+
+Vulnerability Density : 0.15 Vulnerabilities/KLOC
+
+Code Smell Density : 12.01 Code Smells/KLOC
+
+===============================================================================
+LOGGING
+===============================================================================
+
+Maintain execution logs.
+
+Example
+
+Start Time
+
+End Time
+
+Project Name
+
+API Response Code
+
+Execution Time
+
+Errors
+
+Retry Count
+
+===============================================================================
+ERROR HANDLING
+===============================================================================
+
+Handle
+
+Authentication Failure
+
+Connection Timeout
+
+Sonar Unavailable
+
+Invalid Project Key
+
+Empty Metrics
+
+Malformed JSON
+
+Retry failed requests before terminating.
+
+===============================================================================
+SCHEDULING (OPTIONAL)
+===============================================================================
+
+The utility should support scheduled execution using Linux cron.
+
+Examples
+
+Daily
+
+Weekly
+
+Monthly
+
+Or manual execution whenever required.
+
+===============================================================================
+FUTURE ENHANCEMENTS
+===============================================================================
+
+Support multiple SonarQube servers.
+
+Support multiple GitHub organizations.
+
+Generate historical trend reports.
+
+Generate monthly quality reports.
+
+Email report automatically.
+
+Push metrics to Grafana/Power BI.
+
+Store historical data in PostgreSQL/MySQL.
+
+Create dashboards.
+
+===============================================================================
+SUCCESS CRITERIA
+===============================================================================
+
+The standalone utility should:
+
+✓ Run independently from CI/CD.
+✓ Require only network access to SonarQube.
+✓ Collect quality metrics for configured projects.
+✓ Calculate KLOC from NCLOC.
+✓ Calculate defect density and related metrics.
+✓ Generate JSON, CSV, and HTML reports.
+✓ Log every execution.
+✓ Be configurable without code changes.
+✓ Be reusable for any project by updating the configuration file only.
