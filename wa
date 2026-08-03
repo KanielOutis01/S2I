@@ -1,451 +1,536 @@
-# Knowledge Transfer (KT): Standalone Code Quality Metrics Collector (KLOC & Defect Density)
+# KT: End-to-End Understanding of the Release Branching Strategy
 
-===============================================================================
-OBJECTIVE
-===============================================================================
+## Objective
 
-Design and implement a standalone utility that runs independently of the CI/CD
-pipeline to collect code quality metrics from SonarQube and generate reports.
+The objective of this branching strategy is to:
+1. Allow continuous feature development.
+2. Freeze a stable release for SIT/UAT testing.
+3. Fix production/UAT bugs without affecting ongoing development.
+4. Ensure all bug fixes are carried forward into future releases.
 
-The utility will run from a dedicated Linux server (or VM) that has network
-access to:
+------------------------------------------------------------------------------
 
-• SonarQube
-• GitHub (optional)
-• OpenShift (optional)
-• Internal repositories
+BRANCHES
 
-This utility is NOT part of the DevOps pipeline. It should be executable on
-demand or via a scheduled cron job.
+Feature Branch
+    │
+    ▼
+Development (Dev)
+    │
+    ▼
+Release Branch
+    │
+    ▼
+SIT
+    │
+    ▼
+UAT
+    │
+    ▼
+Master/Main
+    │
+    ▼
+Production
 
-===============================================================================
-GOAL
-===============================================================================
+------------------------------------------------------------------------------
 
-Generate a quality report for each application containing:
+STEP 1 - FEATURE DEVELOPMENT
 
-• Project Name
-• NCLOC (Non-Comment Lines of Code)
-• KLOC
-• Bugs
-• Vulnerabilities
-• Security Hotspots
-• Code Smells
-• Coverage
-• Duplicated Code
-• Reliability Rating
-• Security Rating
-• Maintainability Rating
-• Defect Density
-• Vulnerability Density
-• Code Smell Density
-• Scan Date
-• Trend (optional)
-
-Only first-party source code must be considered.
-
-===============================================================================
-HIGH LEVEL ARCHITECTURE
-===============================================================================
-
-                      +---------------------+
-                      |   Linux Server      |
-                      |  Metrics Collector  |
-                      +----------+----------+
-                                 |
-        -------------------------------------------------
-        |                  |                 |           |
-        |                  |                 |           |
-        ▼                  ▼                 ▼           ▼
-   SonarQube API      GitHub API      OpenShift API   Report Folder
-
-The utility mainly uses SonarQube. GitHub/OpenShift are optional if additional
-metadata (repository, branch, deployment info) is required.
-
-===============================================================================
-DIRECTORY STRUCTURE
-===============================================================================
-
-quality-metrics/
-
-│
-
-├── config/
-
-│      config.yaml
-
-│
-
-├── scripts/
-
-│      collect_metrics.py
-
-│      calculate_metrics.py
-
-│      generate_report.py
-
-│
-
-├── output/
-
-│      json/
-
-│      csv/
-
-│      html/
-
-│
-
-├── logs/
-
-│
-
-├── archive/
-
-│
-
-└── README.md
-
-===============================================================================
-CONFIGURATION
-===============================================================================
-
-config.yaml
-
-Store all configurable values.
+• Every developer creates a feature branch from the Development branch.
 
 Example:
 
-Sonar URL
+Development
+    ├── feature-login
+    ├── feature-payment
+    ├── feature-profile
 
-Sonar Authentication Token
+Developers work independently.
 
-Project Keys
+Once development is completed,
 
-Output Directory
+Feature Branch
+        │
+        ▼
+Development
 
-Schedule Frequency
+Only reviewed code is merged into Development.
 
-Timeout
+Development now contains:
 
-Proxy Details (if required)
+Sprint 1
+Sprint 2
+Sprint 3
 
-Nothing should be hardcoded.
+Development is always the integration branch.
 
-===============================================================================
-DATA SOURCE
-===============================================================================
+------------------------------------------------------------------------------
 
-Primary Source
+STEP 2 - CREATE RELEASE
 
-SonarQube REST API
+Once Sprint 1, Sprint 2 and Sprint 3 are completed,
 
-Endpoint
+Create
 
-/api/measures/component
+release/1.0.0
 
-Metrics Required
+This release branch is a snapshot of Development at that point.
 
-ncloc
+Example:
 
-bugs
-
-vulnerabilities
-
-security_hotspots
-
-code_smells
-
-coverage
-
-duplicated_lines_density
-
-reliability_rating
-
-security_rating
-
-sqale_rating
-
-===============================================================================
-WORKFLOW
-===============================================================================
-
-Step 1
-
-Read configuration.
+Development
+    Sprint1
+    Sprint2
+    Sprint3
 
 ↓
 
-Step 2
+release/1.0.0
 
-Authenticate with SonarQube using API Token.
+After this,
 
-↓
+NO NEW FEATURES should be added to the release branch.
 
-Step 3
+Only
 
-Read project list from configuration.
+• Bug Fixes
+• Version Changes
+• Configuration Changes
 
-↓
+are allowed.
 
-Step 4
+The release branch becomes frozen.
 
-For every project
+------------------------------------------------------------------------------
 
-Call SonarQube REST API
+STEP 3 - CONTINUE DEVELOPMENT
 
-↓
+Developers DO NOT STOP.
 
-Step 5
+They continue working on Development.
 
-Read metrics
+Development becomes
 
-NCLOC
+Sprint1
+Sprint2
+Sprint3
+Sprint4
+Sprint5
 
-Bugs
+Release branch still contains only
 
-Vulnerabilities
+Sprint1
+Sprint2
+Sprint3
 
-Coverage
+Therefore,
 
-Code Smells
+Development != Release
 
-Security Hotspots
+This is intentional.
 
-Duplicated Code
+------------------------------------------------------------------------------
 
-Ratings
+STEP 4 - SIT VALIDATION
 
-↓
+Deploy
 
-Step 6
+release/1.0.0
 
-Perform calculations
+to SIT.
 
-KLOC = NCLOC / 1000
+SIT validates
 
-Defect Density = Bugs / KLOC
+• Functional Testing
+• Regression
+• Integration
 
-Vulnerability Density = Vulnerabilities / KLOC
+If everything is good,
 
-Code Smell Density = Code Smells / KLOC
+Create Tag
 
-↓
+Tag 1.0.0
 
-Step 7
+Tagging means this exact code version is approved.
 
-Generate reports
+------------------------------------------------------------------------------
 
-JSON
+STEP 5 - UAT DEPLOYMENT
 
-CSV
+Deploy the SAME tagged release to UAT.
 
-HTML
+Important:
 
-↓
+Do NOT rebuild.
 
-Step 8
+Do NOT recreate image.
 
-Store reports in output folder.
+Do NOT rebuild binaries.
 
-↓
+Exactly the same artifact/image/tag moves forward.
 
-Step 9
+Flow
 
-Archive previous reports.
+release/1.0.0
+      │
+      ▼
+SIT
+      │
+Tag 1.0.0
+      │
+      ▼
+UAT
 
-↓
+------------------------------------------------------------------------------
 
-Step 10
+STEP 6 - UAT BUG
 
-Log execution status.
+Suppose UAT finds a bug.
 
-===============================================================================
-CALCULATIONS
-===============================================================================
+DO NOT FIX IT IN DEVELOPMENT.
 
-KLOC
+Instead,
 
-KLOC = NCLOC / 1000
+Create
+
+release/1.0.0.1
+
+(or continue working in the existing release branch depending on company policy.)
+
+Now the release contains
+
+Sprint1
+Sprint2
+Sprint3
+Bug Fix
+
+Notice
+
+Sprint4
+Sprint5
+
+are NOT included.
+
+This keeps the release stable.
+
+------------------------------------------------------------------------------
+
+STEP 7 - VALIDATE THE FIX
+
+According to the process shared in the email,
+
+Deploy
+
+release/1.0.0.1
+
+to SIT.
+
+Validate the bug fix.
+
+If successful,
+
+Promote the SAME release
+
+to UAT.
+
+Flow
+
+release/1.0.0.1
+        │
+        ▼
+SIT
+        │
+        ▼
+UAT
+
+No rebuild.
+
+No cherry-picking.
+
+Same release.
+
+------------------------------------------------------------------------------
+
+STEP 8 - BACK MERGE
+
+This is the MOST IMPORTANT STEP.
+
+After UAT approves,
+
+Merge
+
+release/1.0.0.1
+
+BACK
+
+into
+
+Development.
 
 Example
 
-NCLOC = 52,860
+Development
 
-KLOC = 52.86
+Sprint1
+Sprint2
+Sprint3
+Sprint4
+Sprint5
 
---------------------------------------------
+↓
 
-Defect Density
+Merge release/1.0.0.1
 
-Bugs / KLOC
+↓
 
-Example
+Development
 
-110 Bugs
+Sprint1
+Sprint2
+Sprint3
+Sprint4
+Sprint5
+Bug Fix
 
-52.86 KLOC
+Now the bug fix becomes part of future development.
 
-110 / 52.86
+------------------------------------------------------------------------------
 
-= 2.08 Bugs/KLOC
+WHY BACK MERGE IS NECESSARY
 
---------------------------------------------
+Suppose we DO NOT merge back.
 
-Vulnerability Density
+Development
 
-Vulnerabilities / KLOC
+Sprint1
+Sprint2
+Sprint3
+Sprint4
+Sprint5
 
---------------------------------------------
+Release
 
-Code Smell Density
+Sprint1
+Sprint2
+Sprint3
+Bug Fix
 
-Code Smells / KLOC
+Now later,
 
-===============================================================================
-OUTPUT FILES
-===============================================================================
+Create
 
-JSON
+release/1.0.2
 
-metrics.json
+from Development.
 
-CSV
+Development never received the Bug Fix.
 
-metrics.csv
+Therefore,
 
-HTML
+release/1.0.2
 
-metrics.html
+contains
 
-Each report should contain one row per application.
+Sprint1
+Sprint2
+Sprint3
+Sprint4
+Sprint5
 
-===============================================================================
-SAMPLE REPORT
-===============================================================================
+BUT
 
-Application : Retail-BFF
+the previous UAT bug comes back again.
 
-Scan Date : 19-Jul-2026
+This is called
 
-NCLOC : 52,860
+Branch Divergence
 
-KLOC : 52.86
+Back merging completely avoids this problem.
 
-Bugs : 110
+------------------------------------------------------------------------------
 
-Vulnerabilities : 8
+STEP 9 - NEXT RELEASE
 
-Security Hotspots : 14
+After Sprint4 and Sprint5 finish,
 
-Code Smells : 635
+Create
 
-Coverage : 81.2%
+release/1.0.2
 
-Duplicated Code : 1.4%
+from Development.
 
-Reliability Rating : A
+Since Development already received
 
-Security Rating : A
+Bug Fix
 
-Maintainability Rating : B
+through back merge,
 
-Defect Density : 2.08 Bugs/KLOC
+release/1.0.2 contains
 
-Vulnerability Density : 0.15 Vulnerabilities/KLOC
+Sprint1
+Sprint2
+Sprint3
+Bug Fix
+Sprint4
+Sprint5
+
+Everything is preserved.
+
+------------------------------------------------------------------------------
+
+COMPLETE FLOW
+
+Feature Branch
+        │
+        ▼
+Development
+(Sprint1 Sprint2 Sprint3)
+        │
+        ▼
+Create Release 1.0.0
+        │
+        ▼
+SIT
+        │
+Tag 1.0.0
+        │
+        ▼
+UAT
+        │
+        ├───────────────No Bug──────────────► Production
+        │
+        ▼
+Bug Found
+        │
+        ▼
+release/1.0.0.1
+        │
+        ▼
+SIT Validation
+        │
+        ▼
+UAT Validation
+        │
+        ▼
+Back Merge
+        │
+        ▼
+Development
+(now contains Bug Fix + Sprint4 + Sprint5)
+        │
+        ▼
+Create release/1.0.2
+        │
+        ▼
+SIT
+        │
+        ▼
+UAT
+        │
+        ▼
+Production
 
-Code Smell Density : 12.01 Code Smells/KLOC
+------------------------------------------------------------------------------
 
-===============================================================================
-LOGGING
-===============================================================================
+QUESTIONS DISCUSSED DURING KT
 
-Maintain execution logs.
+Q1. Can Sprint4 and Sprint5 continue while Sprint1-3 go to UAT?
 
-Example
+Answer:
+Yes.
+That is exactly why the Release branch exists.
+Development continues independently while Release remains frozen.
 
-Start Time
+------------------------------------------------------------------------------
 
-End Time
+Q2. Where should UAT bugs be fixed?
 
-Project Name
+Answer:
+Always in the Release branch.
 
-API Response Code
+Never directly in Development.
 
-Execution Time
+------------------------------------------------------------------------------
 
-Errors
+Q3. After the UAT bug is fixed, where should the code be merged?
 
-Retry Count
+Answer:
+Merge the Release branch back into the Development branch.
 
-===============================================================================
-ERROR HANDLING
-===============================================================================
+This is called Back Merge.
 
-Handle
+------------------------------------------------------------------------------
 
-Authentication Failure
+Q4. Why do we back merge?
 
-Connection Timeout
+Answer:
+To ensure future releases also contain the UAT bug fixes.
 
-Sonar Unavailable
+Otherwise, future releases may reintroduce already-fixed defects.
 
-Invalid Project Key
+------------------------------------------------------------------------------
 
-Empty Metrics
+Q5. Why not fix directly in Development?
 
-Malformed JSON
+Answer:
+Development already contains Sprint4, Sprint5 and other future work.
 
-Retry failed requests before terminating.
+Fixing there would make it impossible to release only Sprint1-3.
 
-===============================================================================
-SCHEDULING (OPTIONAL)
-===============================================================================
+Release must remain isolated.
 
-The utility should support scheduled execution using Linux cron.
+------------------------------------------------------------------------------
 
-Examples
+Q6. Is this GitFlow?
 
-Daily
+Answer:
+Yes.
 
-Weekly
+This is a standard GitFlow-based release management process.
 
-Monthly
+GitFlow principles followed:
 
-Or manual execution whenever required.
+• Feature branches from Development
+• Release branch created from Development
+• Development continues independently
+• Only bug fixes allowed in Release
+• Release promoted through SIT → UAT → Production
+• Release bug fixes back merged into Development
+• Future releases created from updated Development
 
-===============================================================================
-FUTURE ENHANCEMENTS
-===============================================================================
+------------------------------------------------------------------------------
 
-Support multiple SonarQube servers.
+ONE POINT TO CLARIFY WITH THE TEAM
 
-Support multiple GitHub organizations.
+The email mentions:
 
-Generate historical trend reports.
+Release Bug
+        │
+        ▼
+Deploy to SIT
+        │
+        ▼
+Deploy to UAT
 
-Generate monthly quality reports.
+This works correctly only if SIT is validating the Release branch.
 
-Email report automatically.
+Question to ask:
 
-Push metrics to Grafana/Power BI.
+"When validating release bug fixes in SIT, do we deploy the Release branch itself to SIT, or is SIT already running the latest Development branch containing Sprint4 and Sprint5?"
 
-Store historical data in PostgreSQL/MySQL.
+If SIT always deploys the Release branch, then the proposed strategy is sound.
 
-Create dashboards.
+------------------------------------------------------------------------------
 
-===============================================================================
-SUCCESS CRITERIA
-===============================================================================
+FINAL UNDERSTANDING
 
-The standalone utility should:
+This strategy allows:
 
-✓ Run independently from CI/CD.
-✓ Require only network access to SonarQube.
-✓ Collect quality metrics for configured projects.
-✓ Calculate KLOC from NCLOC.
-✓ Calculate defect density and related metrics.
-✓ Generate JSON, CSV, and HTML reports.
-✓ Log every execution.
-✓ Be configurable without code changes.
-✓ Be reusable for any project by updating the configuration file only.
+✔ Continuous feature development
+✔ Stable release testing
+✔ Parallel Sprint development
+✔ Safe UAT bug fixing
+✔ Promotion of the same artifact across environments
+✔ No code loss through back merge
+✔ Future releases automatically include previous release bug fixes
+✔ Alignment with standard GitFlow release management
